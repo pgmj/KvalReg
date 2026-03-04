@@ -1,0 +1,355 @@
+---
+title: "KvalReg: scale"
+subtitle: "Rasch analysis"
+title-block-banner: "#870052"
+title-block-banner-color: "#FEEEEB"
+author: 
+  name: Magnus Johansson
+  affiliation: Karolinska Institutet
+  orcid: 0000-0003-1669-592X
+  email: magnus.johansson.3@ki.se
+date: last-modified
+date-format: iso
+always_allow_html: true
+format: 
+  html:
+    toc: true
+    toc-depth: 3
+    toc-title: "Table of contents"
+    embed-resources: true
+    standalone: true
+    page-layout: full
+    code-overflow: wrap
+    code-fold: true
+    code-tools: true
+    code-link: true
+    number-sections: true
+    fig-dpi: 96
+    layout-align: left
+    linestretch: 1.6
+    theme:
+      - materia
+    css: styles.css
+    license: CC BY
+execute:
+  echo: true
+  warning: false
+  message: false
+  cache: true
+editor_options: 
+  markdown: 
+    wrap: 72
+  chunk_output_type: console
+---
+
+```{r}
+library(tidyverse)
+library(janitor)
+library(car)
+
+cores <- 4
+library(easyRasch)
+options(rgl.useNULL = TRUE)
+
+### some commands exist in multiple packages, here we define preferred ones that are frequently used
+select <- dplyr::select
+count <- dplyr::count
+recode <- car::recode
+rename <- dplyr::rename
+```
+
+## Data import
+
+```{r}
+# read datafile, preprocessed in script_260303.R
+d_all <- read_csv("data/cisiAnalysisSample.csv") %>% 
+  na.omit() # may not be needed or useful?
+
+# a vector of ordered response category labels
+resp_cats <- c("Normal", "Slowness and/or minimal cognitive problems", "Mild cognitive problems, no limitations", "Moderate cognitive problems, help is required for some basic ADL", "Severe cognitive problems, help is required for most or all basic ADL", "Mild to moderate cognitive problems, does not need help for basic ADL", "Severely disabled, helpless, complete assistance needed")
+
+# Here it would be nice to have the item content
+items <- c()
+
+# the itemlabels object is useful later on
+#itemlabels <- data.frame(itemnr = names(data), item = items)
+```
+
+```{r}
+# subset items to their own dataframe
+d_dif <- d_all
+d <- d_all %>% 
+  select(motorSigns,disability,motorComplications,cognition)
+itemlabels <- data.frame(itemnr = names(d), item = names(d))
+```
+
+
+## Figures
+
+::: panel-tabset
+### Guttman heatmap
+```{r}
+RIheatmap(d)
+```
+
+### Stacked bars
+```{r}
+RIbarstack(d)
+```
+
+### Tileplot n
+```{r}
+RItileplot(d_all[,-1])
+```
+
+### Tileplot %
+```{r}
+RItileplot(d_all[,-1], percent = T)
+```
+### Columns
+```{r}
+RIitemcols(d)
+```
+:::
+
+
+## Rasch 1
+
+::: panel-tabset
+### Item-restscore bootstrap
+```{r}
+RIbootRestscore(d, iterations = 250, samplesize = 800, cpu = cores)
+```
+### Item fit
+```{r}
+simfit1 <- RIgetfit(d, 400, cores)
+RIitemfit(d, simfit1)
+```
+### Item-restscore
+```{r}
+RIrestscore(d)
+```
+### CICC
+```{r}
+RIciccPlot(d)
+library(RASCHplot) # devtools::install_github("ERRTG/RASCHplot")
+
+CICCplot(PCM(d),
+         which.item = c(1:4),
+         lower.groups = c(0,5,10,15,20), # may need adjustment
+         grid.items = TRUE)
+```
+
+### PCA of residuals
+```{r}
+#| tbl-cap: "PCA of Rasch model residuals"
+# this takes some time...
+RIbootPCA(d, iterations = 250, cpu = cores)$p99 
+RIpcmPCA(d) 
+```
+
+### Residual correlations
+```{r}
+RIpartgamLD(d)
+simcor1 <- RIgetResidCor(d, iterations = 500, cores)
+RIresidcorr(d, cutoff = simcor1$p99)
+```
+
+### Many items ICC
+```{r}
+#RIitemCats(d)
+mirt(d, model=1, itemtype='Rasch', verbose = FALSE) %>% 
+  plot(type="trace", as.table = TRUE, 
+       theta_lim = c(-5,6)) # changes x axis limits
+```
+
+### Targeting
+```{r}
+#| fig-height: 6
+# increase fig-height above as needed, if you have many items
+RItargeting(d, fast_thetas = T)
+```
+### Reliability
+```{r}
+RIreliability(d)
+```
+### DIF sex
+```{r}
+# always check tileplots for empty cells or low counts (below 4)
+RIdifTileplot(d, factor(d_dif$sex))
+RIdifTableLR(d, factor(d_dif$sex))
+RIdifThreshTblLR(d, factor(d_dif$sex))
+RIdifThreshFigLR(d, factor(d_dif$sex))
+RIpartgamDIF(d, factor(d_dif$sex))
+
+RIciccPlot(d, dif = "yes", dif_var = factor(d_dif$sex))
+```
+### DIF age
+```{r}
+# tree model to determine cut points
+RIdifTable(d, d_dif$age)
+dif_age_cut <- cut(d_dif$age, breaks = c(0,73,79,86,120))
+# check tileplots for empty cells
+RIdifTileplot(d, dif_age_cut)
+RIdifFigure(d, d_dif$age)
+RIdifFigThresh(d, d_dif$age)
+
+# we can also use the LR and CICC method with the cutpoints
+RIciccPlot(d, dif = "yes", dif_var = dif_age_cut)
+RIdifTableLR(d, dif_age_cut)
+RIdifFigureLR(d, dif_age_cut)
+RIdifThreshTblLR(d, dif_age_cut)
+RIdifThreshFigLR(d, dif_age_cut)
+```
+
+wrangling code if needed
+```{r}
+#| eval: false
+
+d %>% 
+  mutate(across(everything(), ~ car::recode(.x,"6=5"))) %>% 
+  RIdifTable(d_dif$age)
+```
+### age+gender
+```{r}
+# interaction DIF?
+RIdifTable2(d, 
+              dif.var1 = d_dif$age,
+              dif.var2 = factor(d_dif$sex))
+```
+### Person fit
+```{r}
+RIpfit(d)
+RIu3poly(d) # this only produces a stable % of misfits
+
+# who is misfit according to U3?
+params <- RIitemparams(d, output = "dataframe") %>%
+  select(!Location) %>%
+  as.matrix()
+thetas <- RIestThetas(d)$WLE
+
+cf <- PerFit::U3poly(matrix = d, Ncat = max(as.matrix(d)) +
+  1, IRT.PModel = "PCM", IP = params, Ability = thetas)
+
+flagged <- PerFit::flagged.resp(cf)
+flag_id <- flagged[["Scores"]] %>% 
+  as.data.frame() %>% 
+  pull(FlaggedID)
+```
+### Item-restscore bootstrap nomisfits
+```{r}
+RIbootRestscore(d[-flag_id,])
+```
+### Item fit nomisfits
+```{r}
+simfitx <- RIgetfit(d[-flag_id,], iterations = 400, cpu = cores)
+RIitemfit(d[-flag_id,], simfitx)
+```
+### LD nomisfits
+```{r}
+RIpartgamLD(d[-flag_id,])
+simcor1b <- RIgetResidCor(d[-flag_id,], iterations = 500, cores)
+RIresidcorr(d[-flag_id,], cutoff = simcor1b$p99)
+```
+### Reliability
+```{r}
+RIreliability(d) # for PSI and RMU
+RIrelRep(d) # alpha and omega
+RIrelRep(d, rel = "omega")
+```
+### Item parameters
+```{r}
+RIitemparams(d)
+# change the filename as needed
+RIitemparams(d, output = "file", filename = "scale_parameters.csv")
+```
+### Transformation table
+```{r}
+RIscoreSE(d)
+# change the filename as needed
+RIscoreSE(d, output = "dataframe") %>% 
+  write_csv("scale_transformation.csv")
+```
+### Distribution of thetas
+
+Using Weighted Likelihood Estimation (Warm, 1989).
+
+```{r}
+hist(RIestThetas(d)$WLE, breaks = 30, col = "lightblue", main = "Histogram of WLE thetas", xlab = "Latent logit scale")
+summary(RIestThetas(d)$WLE)
+```
+:::
+
+## CFA
+
+```{r}
+library(lavaan)
+library(lavaanExtra)
+library(lavaanPlot)
+library(dynamic) # remotes::install_github("melissagwolf/dynamic")
+# see https://rpubs.com/dmcneish/1025400 for details
+
+fit_metrics_scaled <- c("chisq.scaled", "df", "pvalue.scaled",
+                        "cfi.scaled", "tli.scaled", "rmsea.scaled",
+                        "rmsea.ci.lower.scaled","rmsea.ci.upper.scaled",
+                        "srmr")
+```
+
+```{r}
+latent <- list(f1 = names(d)) # use names of all variables to load on one variable
+model <- write_lavaan(latent = latent) # create the model specification
+# fit the CFA and store result as cfa1
+cfa1 <- cfa(model, data = d,
+            ordered = TRUE, estimator = "WLSMV")
+# review summary, including standardized factor loadings "Std.lv"
+#summary(cfa1, standardized = T)
+
+# get dynamic cutoffs
+# WARNING: takes some time to run...
+dyn1 <- dynamic::catOne(cfa1, reps = 500)
+dyn1 # note that empirical values are disordered, CFI and RMSEA should change place
+```
+
+
+Review observed/emprical fit measures
+
+```{r}
+fitmeasures(cfa1, fit_metrics_scaled) %>%
+  rbind() %>%
+  as.data.frame() %>%
+  mutate(across(where(is.numeric),~ round(.x, 3))) %>%
+  knitr::kable()
+```
+
+### Modification indices
+
+Residual correlations are indicated by op = ~~
+
+```{r}
+modificationIndices(cfa1,
+                    standardized = T) %>%
+  as.data.frame(row.names = NULL) %>%
+  filter(mi > 3) %>%
+  arrange(desc(mi)) %>%
+  mutate(across(where(is.numeric),~ round(.x, 3))) %>%
+  knitr::kable()
+```
+
+### Standardized loadings plot
+
+```{r}
+# https://labasim.github.io/lavaanPlot/articles/Intro_to_lavaanPlot.html
+lavaanPlot(cfa1, 
+           node_options = list(shape = "box", fontname = "Helvetica"),
+           edge_options = list(color = "grey"), 
+           graph_options = list(rankdir = "LR"),
+           coefs = TRUE, stand = TRUE)
+
+```
+
+
+## System information
+```{r}
+sessionInfo()
+```
+
