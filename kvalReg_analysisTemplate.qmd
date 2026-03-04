@@ -342,7 +342,7 @@ modificationIndices(cfa1,
 lavaanPlot(cfa1, 
            node_options = list(shape = "box", fontname = "Helvetica"),
            edge_options = list(color = "grey"), 
-           graph_options = list(rankdir = "LR"),
+           graph_options = list(rankdir = "LR"), # orient plot Left to Right (LR)
            coefs = TRUE, stand = TRUE)
 
 ```
